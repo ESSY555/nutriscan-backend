@@ -6,6 +6,7 @@ use App\Http\Controllers\MealController;
 use App\Http\Controllers\CravingController;
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\NutritionTipController;
+use App\Http\Controllers\ScanController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('auth')->group(function () {
@@ -31,3 +32,5 @@ Route::post('cravings/generate', [CravingController::class, 'generate']);
 Route::get('cravings', [CravingController::class, 'index']);
 Route::post('cravings', [CravingController::class, 'store']);
 Route::delete('cravings/{id}', [CravingController::class, 'destroy']);
+
+Route::post('scan/extract', [ScanController::class, 'extract']);
