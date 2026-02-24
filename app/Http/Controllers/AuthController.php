@@ -44,6 +44,7 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'allergens' => $user->allergens ?? [],
+                'avatar_url' => $user->avatar_url ?? null,
             ],
             'token' => $token,
         ], 201);
@@ -75,6 +76,7 @@ class AuthController extends Controller
                 'name' => $user->name,
                 'email' => $user->email,
                 'allergens' => $user->allergens ?? [],
+                'avatar_url' => $user->avatar_url ?? null,
             ],
             'token' => $token,
         ]);
