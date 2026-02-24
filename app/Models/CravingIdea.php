@@ -17,5 +17,12 @@ class CravingIdea extends Model
         'country',
         'diet',
         'goal',
+        'fingerprint',
+        'ideas_text',
+        'allergens',
+    ];
+
+    protected $casts = [
+        'allergens' => 'array',
     ];
 }

@@ -26,6 +26,7 @@ Route::prefix('meal-plans')->group(function () {
 Route::post('profile/preferences', [ProfileController::class, 'updatePreferences']);
 Route::post('nutrition-tip', [NutritionTipController::class, 'tip']);
 
+Route::post('cravings/generate', [CravingController::class, 'generate']);
 Route::get('cravings', [CravingController::class, 'index']);
 Route::post('cravings', [CravingController::class, 'store']);
 Route::delete('cravings/{id}', [CravingController::class, 'destroy']);
