@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use thiagoalessio\TesseractOCR\TesseractOCR;
 
@@ -22,17 +23,42 @@ class ScanController extends Controller
             'goal' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $path = $request->file('image')->store('scan_uploads');
-        $absolutePath = Storage::path($path);
+        $file = $request->file('image');
+        $storedName = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
+        $path = $file->storeAs('scan_uploads', $storedName, 'local');
+        $absolutePath = Storage::disk('local')->path($path);
         if (! file_exists($absolutePath)) {
             throw ValidationException::withMessages([
                 'image' => ['Uploaded image could not be read from storage.'],
             ]);
         }
 
-        $text = (new TesseractOCR($absolutePath))
-            ->lang('eng')
-            ->run();
+        // Re-encode to JPEG to avoid format quirks and improve OCR on Windows
+        try {
+            $raw = file_get_contents($absolutePath);
+            if ($raw !== false) {
+                $img = @imagecreatefromstring($raw);
+                if ($img !== false) {
+                    imagejpeg($img, $absolutePath, 95);
+                    imagedestroy($img);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Image re-encode skipped', ['error' => $e->getMessage()]);
+        }
+
+        try {
+            $text = (new TesseractOCR($absolutePath))
+                ->lang('eng')
+                ->psm(6)
+                ->oem(1)
+                ->run();
+        } catch (\Throwable $e) {
+            Log::warning('Tesseract failed', ['error' => $e->getMessage()]);
+            throw ValidationException::withMessages([
+                'image' => ['OCR failed. Please try again with a clearer image or adjust the crop.'],
+            ]);
+        }
 
         $rawLines = collect(preg_split('/\r\n|\r|\n/', $text))
             ->flatMap(fn($line) => explode(',', $line))
@@ -41,6 +67,18 @@ class ScanController extends Controller
             ->unique()
             ->values()
             ->all();
+
+        // Ingredient-like filtering: keep short, alpha-heavy lines
+        $ingredientLines = collect($rawLines)->filter(function ($line) {
+            $len = strlen($line);
+            if ($len < 2 || $len > 50) return false;
+            if (preg_match('/https?:\/\//i', $line)) return false;
+            // Must contain letters and at most 6 words
+            if (!preg_match('/[a-z]/i', $line)) return false;
+            $wordCount = str_word_count($line);
+            if ($wordCount === 0 || $wordCount > 6) return false;
+            return true;
+        })->values()->all();
 
         $user = null;
         if (!empty($data['user_email'])) {
@@ -51,7 +89,9 @@ class ScanController extends Controller
         $diet = $data['diet'] ?? 'No Preference';
         $goal = $data['goal'] ?? 'Eat Healthier';
 
-        $ingredients = collect($rawLines)->map(function ($name) use ($allergens) {
+        $sourceLines = !empty($ingredientLines) ? $ingredientLines : $rawLines;
+
+        $ingredients = collect($sourceLines)->map(function ($name) use ($allergens) {
             $safe = true;
             foreach ($allergens as $allergen) {
                 if ($allergen && stripos($name, $allergen) !== false) {
@@ -75,12 +115,15 @@ class ScanController extends Controller
             $verdict = 'good';
         }
 
+        $emptyNotice = empty($ingredients) ? 'No ingredient-like text was detected. Try a clearer label photo.' : null;
+
         return response()->json([
             'ingredients' => $ingredients,
             'ai_note' => $aiNote,
             'verdict' => $verdict,
             'summary' => $aiNote,
             'raw_text' => $rawLines,
+            'notice' => $emptyNotice,
         ]);
     }
 
