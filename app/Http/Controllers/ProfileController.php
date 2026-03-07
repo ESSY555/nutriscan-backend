@@ -16,6 +16,10 @@ class ProfileController extends Controller
             'email' => ['required', 'string', 'email'],
             'allergens' => ['nullable', 'array'],
             'allergens.*' => ['string', 'max:255'],
+            'country' => ['nullable', 'string', 'max:120'],
+            'diet' => ['nullable', 'string', 'max:120'],
+            'goal' => ['nullable', 'string', 'max:120'],
+            'onboarding_completed' => ['nullable', 'boolean'],
         ]);
 
         $user = User::where('email', strtolower($data['email']))->first();
@@ -31,6 +35,18 @@ class ProfileController extends Controller
         )));
 
         $user->allergens = $allergens;
+        if (array_key_exists('country', $data)) {
+            $user->country = $data['country'] ?: null;
+        }
+        if (array_key_exists('diet', $data)) {
+            $user->diet_preference = $data['diet'] ?: 'No Preference';
+        }
+        if (array_key_exists('goal', $data)) {
+            $user->health_goal = $data['goal'] ?: 'Eat Healthier';
+        }
+        if (array_key_exists('onboarding_completed', $data)) {
+            $user->onboarding_completed = (bool) $data['onboarding_completed'];
+        }
         $user->save();
 
         return response()->json([
@@ -40,6 +56,10 @@ class ProfileController extends Controller
                 'email' => $user->email,
                 'allergens' => $user->allergens ?? [],
                 'avatar_url' => $user->avatar_url ?? null,
+                'country' => $user->country ?? null,
+                'diet_preference' => $user->diet_preference ?? 'No Preference',
+                'health_goal' => $user->health_goal ?? 'Eat Healthier',
+                'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
             ],
             'message' => 'Preferences updated.',
         ]);

@@ -34,3 +34,4 @@ Route::post('cravings', [CravingController::class, 'store']);
 Route::delete('cravings/{id}', [CravingController::class, 'destroy']);
 
 Route::post('scan/extract', [ScanController::class, 'extract']);
+Route::post('scan/analyze', [ScanController::class, 'analyze']);

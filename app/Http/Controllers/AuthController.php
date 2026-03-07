@@ -34,6 +34,9 @@ class AuthController extends Controller
             'email' => strtolower($data['email']),
             'password' => Hash::make($data['password']),
             'allergens' => $allergens,
+            'diet_preference' => 'No Preference',
+            'health_goal' => 'Eat Healthier',
+            'onboarding_completed' => false,
         ]);
 
         $token = $this->issueToken($user);
@@ -45,6 +48,10 @@ class AuthController extends Controller
                 'email' => $user->email,
                 'allergens' => $user->allergens ?? [],
                 'avatar_url' => $user->avatar_url ?? null,
+                'country' => $user->country ?? null,
+                'diet_preference' => $user->diet_preference ?? 'No Preference',
+                'health_goal' => $user->health_goal ?? 'Eat Healthier',
+                'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
             ],
             'token' => $token,
         ], 201);
@@ -77,6 +84,10 @@ class AuthController extends Controller
                 'email' => $user->email,
                 'allergens' => $user->allergens ?? [],
                 'avatar_url' => $user->avatar_url ?? null,
+                'country' => $user->country ?? null,
+                'diet_preference' => $user->diet_preference ?? 'No Preference',
+                'health_goal' => $user->health_goal ?? 'Eat Healthier',
+                'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
             ],
             'token' => $token,
         ]);

@@ -23,6 +23,10 @@ class User extends Authenticatable
         'password',
         'allergens',
         'avatar_url',
+        'country',
+        'diet_preference',
+        'health_goal',
+        'onboarding_completed',
     ];
 
     /**
@@ -47,6 +51,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'allergens' => 'array',
+            'onboarding_completed' => 'boolean',
         ];
     }
 }
