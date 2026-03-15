@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -14,6 +15,8 @@ class ProfileController extends Controller
     {
         $data = $request->validate([
             'email' => ['required', 'string', 'email'],
+            'name' => ['nullable', 'string', 'max:255'],
+            'password' => ['nullable', 'string', 'min:6'],
             'allergens' => ['nullable', 'array'],
             'allergens.*' => ['string', 'max:255'],
             'country' => ['nullable', 'string', 'max:120'],
@@ -35,6 +38,12 @@ class ProfileController extends Controller
         )));
 
         $user->allergens = $allergens;
+        if (array_key_exists('name', $data) && $data['name'] !== null) {
+            $user->name = trim($data['name']);
+        }
+        if (array_key_exists('password', $data) && $data['password']) {
+            $user->password = Hash::make($data['password']);
+        }
         if (array_key_exists('country', $data)) {
             $user->country = $data['country'] ?: null;
         }
@@ -62,6 +71,35 @@ class ProfileController extends Controller
                 'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
             ],
             'message' => 'Preferences updated.',
+        ]);
+    }
+
+    public function getPreferences(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'email' => ['required', 'string', 'email'],
+        ]);
+
+        $user = User::where('email', strtolower($data['email']))->first();
+        if (! $user) {
+            throw ValidationException::withMessages([
+                'email' => ['User not found.'],
+            ]);
+        }
+
+        return response()->json([
+            'user' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'allergens' => $user->allergens ?? [],
+                'avatar_url' => $user->avatar_url ?? null,
+                'country' => $user->country ?? null,
+                'diet_preference' => $user->diet_preference ?? 'No Preference',
+                'health_goal' => $user->health_goal ?? 'Eat Healthier',
+                'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
+            ],
+            'message' => 'Preferences fetched.',
         ]);
     }
 

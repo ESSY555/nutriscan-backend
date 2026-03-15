@@ -26,6 +26,7 @@ Route::prefix('meal-plans')->group(function () {
 
 Route::post('profile/preferences', [ProfileController::class, 'updatePreferences']);
 Route::post('profile/avatar', [ProfileController::class, 'uploadAvatar']);
+Route::get('profile/preferences', [ProfileController::class, 'getPreferences']);
 Route::post('nutrition-tip', [NutritionTipController::class, 'tip']);
 
 Route::post('cravings/generate', [CravingController::class, 'generate']);
