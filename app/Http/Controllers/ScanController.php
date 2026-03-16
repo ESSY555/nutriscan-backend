@@ -19,12 +19,7 @@ class ScanController extends Controller
     {
         $data = $request->validate([
             'image' => ['required', 'file', 'image', 'max:6144'],
-            'user_email' => ['nullable', 'email'],
-            'diet' => ['nullable', 'string', 'max:255'],
-            'goal' => ['nullable', 'string', 'max:255'],
-            'country' => ['nullable', 'string', 'max:120'],
-            'allergies' => ['nullable', 'array'],
-            'allergies.*' => ['string', 'max:255'],
+            'user_email' => ['required', 'email'],
         ]);
 
         $file = $request->file('image');
@@ -84,15 +79,7 @@ class ScanController extends Controller
             return true;
         })->values()->all();
 
-        $profile = $this->resolveProfile(
-            $data['user_email'] ?? null,
-            [
-                'country' => $data['country'] ?? null,
-                'diet' => $data['diet'] ?? null,
-                'goal' => $data['goal'] ?? null,
-                'allergies' => $data['allergies'] ?? null,
-            ]
-        );
+        $profile = $this->resolveProfile($data['user_email']);
 
         $sourceLines = !empty($ingredientLines) ? $ingredientLines : $rawLines;
         $ingredients = $this->mapIngredientsWithSafety($sourceLines, $profile['allergens']);
@@ -115,25 +102,11 @@ class ScanController extends Controller
             'ingredients' => ['required', 'array', 'min:1'],
             'ingredients.*' => ['string', 'max:255'],
             'product_name' => ['nullable', 'string', 'max:120'],
-            'user_email' => ['nullable', 'email'],
+            'user_email' => ['required', 'email'],
             'ingredient_hash' => ['nullable', 'string', 'max:120'],
-            'user_profile' => ['nullable', 'array'],
-            'user_profile.country' => ['nullable', 'string', 'max:120'],
-            'user_profile.allergies' => ['nullable', 'array'],
-            'user_profile.allergies.*' => ['string', 'max:255'],
-            'user_profile.diet' => ['nullable', 'string', 'max:120'],
-            'user_profile.health_goal' => ['nullable', 'string', 'max:120'],
         ]);
 
-        $profile = $this->resolveProfile(
-            $data['user_email'] ?? null,
-            [
-                'country' => $data['user_profile']['country'] ?? null,
-                'diet' => $data['user_profile']['diet'] ?? null,
-                'goal' => $data['user_profile']['health_goal'] ?? null,
-                'allergies' => $data['user_profile']['allergies'] ?? null,
-            ]
-        );
+        $profile = $this->resolveProfile($data['user_email']);
 
         $cleanIngredientNames = collect($data['ingredients'])
             ->map(fn($i) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', (string) $i)))
@@ -151,10 +124,11 @@ class ScanController extends Controller
         $productName = trim((string) ($data['product_name'] ?? ''));
         $productName = $productName !== '' ? $productName : 'Scanned Food';
         $ingredientHash = $data['ingredient_hash'] ?? $this->hashIngredients($cleanIngredientNames);
+        $userEmail = strtolower($data['user_email']);
 
         $ingredients = $this->mapIngredientsWithSafety($cleanIngredientNames, $profile['allergens']);
 
-        $cacheKey = 'scan_ai:' . md5(strtolower($productName) . '|' . $ingredientHash);
+        $cacheKey = 'scan_ai:' . md5($userEmail . '|' . strtolower($productName) . '|' . $ingredientHash);
         $cached = Cache::get($cacheKey);
         if (is_array($cached)) {
             return response()->json(array_merge($cached, ['cached' => true]));
@@ -178,19 +152,22 @@ class ScanController extends Controller
         return response()->json($payload);
     }
 
-    private function resolveProfile(?string $email, array $overrides = []): array
+    private function resolveProfile(string $email): array
     {
-        $user = null;
-        if (!empty($email)) {
-            $user = User::where('email', strtolower($email))->first();
+        $user = User::where('email', strtolower($email))->first();
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'user_email' => ['User not found. Please sign in again.'],
+            ]);
         }
 
-        $allergens = $overrides['allergies'] ?? $user?->allergens ?? [];
+        $allergens = $user->allergens ?? [];
         $allergens = array_values(array_filter(array_map(fn($a) => trim((string) $a), $allergens)));
 
-        $country = $overrides['country'] ?? ($user->country ?? null);
-        $diet = $overrides['diet'] ?? ($user->diet_preference ?? 'No Preference');
-        $goal = $overrides['goal'] ?? ($user->health_goal ?? 'Eat Healthier');
+        $country = $user->country ?? null;
+        $diet = $user->diet_preference ?? 'No Preference';
+        $goal = $user->health_goal ?? 'Eat Healthier';
 
         return [
             'country' => $country ?: null,
