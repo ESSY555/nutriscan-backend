@@ -253,6 +253,3 @@ If you want, I can:
 
 * Rewrite your parsing logic to handle **real-world ingredient labels**
 * Or design a **95%+ accuracy pipeline** for you 🚀
-
-
-google cloud api key. AIzaSyCdqYSLr8cuH8H83H7JbU3wn_MDzmzVxmc
