@@ -6,6 +6,7 @@ use App\Models\User;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -23,6 +24,10 @@ class ProfileController extends Controller
             'diet' => ['nullable', 'string', 'max:120'],
             'goal' => ['nullable', 'string', 'max:120'],
             'onboarding_completed' => ['nullable', 'boolean'],
+            'notifications' => ['nullable', 'array'],
+            'notifications.scanReminders' => ['nullable', 'boolean'],
+            'notifications.nutritionTips' => ['nullable', 'boolean'],
+            'notifications.weeklyDigest' => ['nullable', 'boolean'],
         ]);
 
         $user = User::where('email', strtolower($data['email']))->first();
@@ -38,6 +43,20 @@ class ProfileController extends Controller
         )));
 
         $user->allergens = $allergens;
+        if (array_key_exists('notifications', $data)) {
+            $user->notification_settings = array_merge(
+                [
+                    'scanReminders' => true,
+                    'nutritionTips' => true,
+                    'weeklyDigest' => false,
+                ],
+                array_filter($data['notifications'] ?? [], fn($v) => $v !== null)
+            );
+            Log::info('Notification settings updated', [
+                'email' => $user->email,
+                'notifications' => $user->notification_settings,
+            ]);
+        }
         if (array_key_exists('name', $data) && $data['name'] !== null) {
             $user->name = trim($data['name']);
         }
@@ -69,6 +88,7 @@ class ProfileController extends Controller
                 'diet_preference' => $user->diet_preference ?? 'No Preference',
                 'health_goal' => $user->health_goal ?? 'Eat Healthier',
                 'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
+                'notification_settings' => $user->notification_settings ?? [],
             ],
             'message' => 'Preferences updated.',
         ]);
@@ -98,6 +118,7 @@ class ProfileController extends Controller
                 'diet_preference' => $user->diet_preference ?? 'No Preference',
                 'health_goal' => $user->health_goal ?? 'Eat Healthier',
                 'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
+                'notification_settings' => $user->notification_settings ?? [],
             ],
             'message' => 'Preferences fetched.',
         ]);

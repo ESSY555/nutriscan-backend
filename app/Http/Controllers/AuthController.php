@@ -37,6 +37,11 @@ class AuthController extends Controller
             'diet_preference' => 'No Preference',
             'health_goal' => 'Eat Healthier',
             'onboarding_completed' => false,
+            'notification_settings' => [
+                'scanReminders' => true,
+                'nutritionTips' => true,
+                'weeklyDigest' => false,
+            ],
         ]);
 
         $token = $this->issueToken($user);
@@ -52,6 +57,7 @@ class AuthController extends Controller
                 'diet_preference' => $user->diet_preference ?? 'No Preference',
                 'health_goal' => $user->health_goal ?? 'Eat Healthier',
                 'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
+                'notification_settings' => $user->notification_settings ?? [],
             ],
             'token' => $token,
         ], 201);
@@ -88,6 +94,7 @@ class AuthController extends Controller
                 'diet_preference' => $user->diet_preference ?? 'No Preference',
                 'health_goal' => $user->health_goal ?? 'Eat Healthier',
                 'onboarding_completed' => (bool) ($user->onboarding_completed ?? false),
+                'notification_settings' => $user->notification_settings ?? [],
             ],
             'token' => $token,
         ]);
