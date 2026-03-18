@@ -60,7 +60,8 @@ class ScanController extends Controller
         }
 
         $rawLines = collect(preg_split('/\r\n|\r|\n/', $text))
-            ->flatMap(fn($line) => explode(',', $line))
+            // treat every comma-delimited segment as its own ingredient candidate
+            ->flatMap(fn($line) => preg_split('/,/', $line))
             ->map(fn($line) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', $line)))
             ->filter()
             ->unique()
@@ -108,7 +109,12 @@ class ScanController extends Controller
 
         $profile = $this->resolveProfile($data['user_email']);
 
+        // Ensure each comma-separated value is treated as a distinct ingredient
         $cleanIngredientNames = collect($data['ingredients'])
+            ->flatMap(function ($i) {
+                $parts = preg_split('/,/', (string) $i);
+                return is_array($parts) ? $parts : [(string) $i];
+            })
             ->map(fn($i) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', (string) $i)))
             ->filter()
             ->unique()
