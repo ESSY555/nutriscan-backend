@@ -36,7 +36,19 @@ class AiMealPlanService
         $weekStart = Carbon::now()->startOfWeek(Carbon::MONDAY);
         $weekEnd = (clone $weekStart)->addDays(6);
 
-        $payload = $this->callOpenAi($preferences, count($this->dayKeys));
+        try {
+            $payload = $this->callOpenAi($preferences, count($this->dayKeys));
+        } catch (\Throwable $e) {
+            Log::warning('AI meal plan weekly fallback to 3 days', [
+                'diet' => $preferences['diet'] ?? null,
+                'goal' => $preferences['goal'] ?? null,
+                'country' => $preferences['country'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
+            $payload = $this->callOpenAi($preferences, 3);
+            $payload['days'] = $this->expandDaysToWeek($payload['days'] ?? []);
+        }
+
         $days = $this->mapDays($payload['days'] ?? [], $weekStart);
         $daily = $this->buildDailyFromWeek($days);
 
@@ -142,8 +154,9 @@ class AiMealPlanService
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])
-                ->connectTimeout(8)
-                ->timeout(25)
+                ->retry(2, 2000) // two retries with 2s backoff
+                ->connectTimeout(10)
+                ->timeout(60)
                 ->post($this->openAiUrl, [
                 'model' => $this->model,
                 'messages' => [
@@ -222,6 +235,24 @@ class AiMealPlanService
         ]);
 
         return $json;
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $days
+     * @return array<int, array<string, mixed>>
+     */
+    private function expandDaysToWeek(array $days): array
+    {
+        if (count($days) >= count($this->dayKeys)) {
+            return $days;
+        }
+        $out = [];
+        $n = max(count($days), 1);
+        foreach ($this->dayKeys as $idx => $_) {
+            $src = $days[$idx] ?? $days[$idx % $n] ?? [];
+            $out[] = $src;
+        }
+        return $out;
     }
 
     /**

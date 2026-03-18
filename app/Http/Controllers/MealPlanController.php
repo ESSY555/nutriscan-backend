@@ -6,6 +6,7 @@ use App\Models\MealPlan;
 use App\Services\MealPlanService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class MealPlanController extends Controller
 {
@@ -47,9 +48,10 @@ class MealPlanController extends Controller
         }
 
         $payloadPlan = $plan->data ?? [];
-        $payloadPlan['week_start'] = $payloadPlan['week_start'] ?? $plan->week_start_date?->toDateString();
+        $weekStartDate = $plan->week_start_date ?: Carbon::now()->startOfWeek(Carbon::MONDAY);
+        $payloadPlan['week_start'] = $payloadPlan['week_start'] ?? $weekStartDate->toDateString();
         $payloadPlan['week_end'] = $payloadPlan['week_end']
-            ?? optional($plan->week_start_date)?->copy()->addDays(6)->toDateString();
+            ?? $weekStartDate->copy()->addDays(6)->toDateString();
 
         return response()->json([
             'plan' => $payloadPlan,
