@@ -153,18 +153,23 @@ class MealPlanService
         $prefs = $this->normalizePreferences($preferences);
         $today = Carbon::now();
         $dayKey = $this->dayKeys[$today->dayOfWeekIso - 1] ?? 'Mon';
-
-        $dailyMeals = $this->ai->generateDailyMeals($prefs);
-
         $data['days'] ??= [];
+
+        // Keep daily meals in sync with the weekly plan; do not generate a separate daily set.
+        $existingDay = $data['days'][$dayKey] ?? null;
+        $dayMeals = is_array($existingDay['meals'] ?? null)
+            ? $existingDay['meals']
+            : ['breakfast' => null, 'lunch' => null, 'dinner' => null];
+        $dayDate = $existingDay['date'] ?? $today->toDateString();
+
         $data['days'][$dayKey] = [
-            'date' => $today->toDateString(),
-            'meals' => $dailyMeals,
+            'date' => $dayDate,
+            'meals' => $dayMeals,
         ];
 
         $data['daily'] = [
-            'date' => $today->toDateString(),
-            'meals' => $dailyMeals,
+            'date' => $dayDate,
+            'meals' => $dayMeals,
         ];
 
         // Preserve week boundaries when present.

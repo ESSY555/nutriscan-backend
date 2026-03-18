@@ -120,6 +120,9 @@ class AiMealPlanService
                 'respect_diet' => $diet,
                 'respect_goal' => $goal,
                 'adapt_country' => $country ?: 'Any',
+                'only_local_cuisine' => $country
+                    ? "Use ONLY {$country} cuisine (regional variations OK). Do NOT include other countries."
+                    : 'Use only the specified country cuisine when provided.',
                 'keep_portion_note' => $portion,
                 'keep names short' => true,
             ],
