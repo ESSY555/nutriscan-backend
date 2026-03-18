@@ -18,9 +18,9 @@ class ScanController extends Controller
     {
         $data = $this->validateExtractRequest($request);
         $absolutePath = $this->storeUploadedImage($request);
-        $text = $this->performOcr($absolutePath);
+        $ocrData = $this->performOcr($absolutePath);
 
-        [$rawLines, $ingredientLines] = $this->parseIngredientsFromText($text);
+        [$rawLines, $ingredientLines] = $this->parseIngredientsFromText($ocrData);
 
         $profile = $this->resolveProfile($data['user_email']);
         $sourceLines = !empty($ingredientLines) ? $ingredientLines : $rawLines;
@@ -28,18 +28,26 @@ class ScanController extends Controller
         $ingredients = $this->mapIngredientsWithSafety($sourceLines, $profile['allergens']);
         $ingredientHash = $this->hashIngredients(array_column($ingredients, 'name'));
 
+        $ocrAccuracy = $this->calculateOcrAccuracy($ingredients);
+        Log::info('Scan OCR accuracy computed', [
+            'user' => $data['user_email'] ?? 'unknown',
+            'ingredient_hash' => $ingredientHash,
+            'ocr_accuracy' => $ocrAccuracy,
+            'ingredients_count' => count($ingredients),
+        ]);
+
         $emptyNotice = empty($ingredients) ? 'No ingredient-like text was detected. Try a clearer label photo.' : null;
 
         return response()->json([
             'ingredients' => $ingredients,
             'raw_text' => $rawLines,
+            'ocr_accuracy' => $ocrAccuracy,
             'notice' => $emptyNotice,
             'ingredient_hash' => $ingredientHash,
             'profile' => $profile,
         ]);
     }
 
-    // ---- ANALYZE METHOD (unchanged, uses OpenAI as before) ----
     public function analyze(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -96,9 +104,6 @@ class ScanController extends Controller
         return response()->json($payload);
     }
 
-    /**
-     * @return array{image: mixed,user_email: string}
-     */
     private function validateExtractRequest(Request $request): array
     {
         return $request->validate([
@@ -107,9 +112,6 @@ class ScanController extends Controller
         ]);
     }
 
-    /**
-     * Store the uploaded image locally and return its absolute path.
-     */
     private function storeUploadedImage(Request $request): string
     {
         $file = $request->file('image');
@@ -123,7 +125,7 @@ class ScanController extends Controller
             ]);
         }
 
-        // Re-encode to JPEG to reduce format issues before OCR
+        // Re-encode to JPEG
         try {
             $raw = file_get_contents($absolutePath);
             if ($raw !== false) {
@@ -141,9 +143,11 @@ class ScanController extends Controller
     }
 
     /**
-     * Run OCR using Google Vision.
+     * Run OCR using Google Vision and return text plus raw line annotations.
+     *
+     * @return array{text: string, lines: array}
      */
-    private function performOcr(string $absolutePath): string
+    private function performOcr(string $absolutePath): array
     {
         $apiKey = env('GOOGLE_VISION_API_KEY');
         if (!$apiKey) {
@@ -170,7 +174,10 @@ class ScanController extends Controller
                 ]);
             }
 
-            return (string) $response->json('responses.0.fullTextAnnotation.text', '');
+            return [
+                'text' => (string) $response->json('responses.0.fullTextAnnotation.text', ''),
+                'lines' => $response->json('responses.0.textAnnotations', []),
+            ];
         } catch (\Throwable $e) {
             Log::warning('Google Vision API error', ['error' => $e->getMessage()]);
             throw ValidationException::withMessages([
@@ -179,13 +186,9 @@ class ScanController extends Controller
         }
     }
 
-    /**
-     * Parse OCR text into raw lines and ingredient candidates (comma-aware).
-     *
-     * @return array{0: string[],1: string[]}
-     */
-    private function parseIngredientsFromText(string $text): array
+    private function parseIngredientsFromText(array $ocrData): array
     {
+        $text = $ocrData['text'] ?? '';
         $rawLines = collect(preg_split('/\r\n|\r|\n/', $text))
             ->flatMap(fn($line) => preg_split('/,/', (string) $line))
             ->map(fn($line) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', (string) $line)))
@@ -196,15 +199,11 @@ class ScanController extends Controller
 
         $ingredientLines = collect($rawLines)->filter(function ($line) {
             $len = strlen($line);
-            if ($len < 2 || $len > 50)
-                return false;
-            if (preg_match('/https?:\/\//i', $line))
-                return false;
-            if (!preg_match('/[a-z]/i', $line))
-                return false;
+            if ($len < 2 || $len > 50) return false;
+            if (preg_match('/https?:\/\//i', $line)) return false;
+            if (!preg_match('/[a-z]/i', $line)) return false;
             $wordCount = str_word_count($line);
-            if ($wordCount === 0 || $wordCount > 6)
-                return false;
+            if ($wordCount === 0 || $wordCount > 6) return false;
             return true;
         })->values()->all();
 
@@ -214,7 +213,6 @@ class ScanController extends Controller
     private function resolveProfile(string $email): array
     {
         $user = User::where('email', strtolower($email))->first();
-
         if (!$user) {
             throw ValidationException::withMessages([
                 'user_email' => ['User not found. Please sign in again.'],
@@ -223,7 +221,6 @@ class ScanController extends Controller
 
         $allergens = $user->allergens ?? [];
         $allergens = array_values(array_filter(array_map(fn($a) => trim((string) $a), $allergens)));
-
         $country = $user->country ?? null;
         $diet = $user->diet_preference ?? 'No Preference';
         $goal = $user->health_goal ?? 'Eat Healthier';
@@ -261,8 +258,23 @@ class ScanController extends Controller
             ->filter()
             ->values()
             ->all();
-
         return hash('sha256', json_encode($normalized));
+    }
+
+    private function calculateOcrAccuracy(array $ingredients): float
+    {
+        if (empty($ingredients)) return 0.0;
+
+        $totalConfidence = 0;
+        $count = 0;
+
+        foreach ($ingredients as $ing) {
+            $conf = $ing['confidence'] ?? 1.0;
+            $totalConfidence += $conf;
+            $count++;
+        }
+
+        return round(($totalConfidence / max($count, 1)) * 100, 1);
     }
 
     private function buildAiAnalysis(array $ingredients, array $profile, string $productName): array
