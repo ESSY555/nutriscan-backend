@@ -352,6 +352,19 @@ PROMPT;
                 return $this->fallbackAi($raw);
             }
 
+            Log::info('AI health check completed', [
+                'product' => $productName,
+                'ingredient_hash' => $this->hashIngredients($ingredients),
+                'ingredients_count' => count($ingredients),
+                'allergen_count' => count($profile['allergens'] ?? []),
+                'diet' => $profile['diet'] ?? null,
+                'health_goal' => $profile['health_goal'] ?? null,
+                'verdict' => $decoded['verdict'] ?? 'Moderate',
+                'allergy_warning' => $decoded['allergy_warning'] ?? null,
+                'diet_conflict' => $decoded['diet_conflict'] ?? null,
+                'health_goal_alignment' => $decoded['health_goal_alignment'] ?? null,
+            ]);
+
             return [
                 'verdict' => $decoded['verdict'] ?? 'Moderate',
                 'reason' => $decoded['reason'] ?? null,
