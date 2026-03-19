@@ -52,6 +52,7 @@ class User extends Authenticatable
             'password' => 'hashed',
             'allergens' => 'array',
             'onboarding_completed' => 'boolean',
+            'notification_settings' => 'array',
         ];
     }
 }

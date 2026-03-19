@@ -11,86 +11,37 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
-use thiagoalessio\TesseractOCR\TesseractOCR;
 
 class ScanController extends Controller
 {
     public function extract(Request $request): JsonResponse
     {
-        $data = $request->validate([
-            'image' => ['required', 'file', 'image', 'max:6144'],
-            'user_email' => ['required', 'email'],
-        ]);
+        $data = $this->validateExtractRequest($request);
+        $absolutePath = $this->storeUploadedImage($request);
+        $ocrData = $this->performOcr($absolutePath);
 
-        $file = $request->file('image');
-        $storedName = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
-        $path = $file->storeAs('scan_uploads', $storedName, 'local');
-        $absolutePath = Storage::disk('local')->path($path);
-        if (! file_exists($absolutePath)) {
-            throw ValidationException::withMessages([
-                'image' => ['Uploaded image could not be read from storage.'],
-            ]);
-        }
-
-        // Re-encode to JPEG to avoid format quirks and improve OCR on Windows
-        try {
-            $raw = file_get_contents($absolutePath);
-            if ($raw !== false) {
-                $img = @imagecreatefromstring($raw);
-                if ($img !== false) {
-                    imagejpeg($img, $absolutePath, 95);
-                    imagedestroy($img);
-                }
-            }
-        } catch (\Throwable $e) {
-            Log::warning('Image re-encode skipped', ['error' => $e->getMessage()]);
-        }
-
-        try {
-            $text = (new TesseractOCR($absolutePath))
-                ->lang('eng')
-                ->psm(6)
-                ->oem(1)
-                ->run();
-        } catch (\Throwable $e) {
-            Log::warning('Tesseract failed', ['error' => $e->getMessage()]);
-            throw ValidationException::withMessages([
-                'image' => ['OCR failed. Please try again with a clearer image or adjust the crop.'],
-            ]);
-        }
-
-        $rawLines = collect(preg_split('/\r\n|\r|\n/', $text))
-            // treat every comma-delimited segment as its own ingredient candidate
-            ->flatMap(fn($line) => preg_split('/,/', $line))
-            ->map(fn($line) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', $line)))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
-
-        // Ingredient-like filtering: keep short, alpha-heavy lines
-        $ingredientLines = collect($rawLines)->filter(function ($line) {
-            $len = strlen($line);
-            if ($len < 2 || $len > 50) return false;
-            if (preg_match('/https?:\/\//i', $line)) return false;
-            // Must contain letters and at most 6 words
-            if (!preg_match('/[a-z]/i', $line)) return false;
-            $wordCount = str_word_count($line);
-            if ($wordCount === 0 || $wordCount > 6) return false;
-            return true;
-        })->values()->all();
+        [$rawLines, $ingredientLines] = $this->parseIngredientsFromText($ocrData);
 
         $profile = $this->resolveProfile($data['user_email']);
-
         $sourceLines = !empty($ingredientLines) ? $ingredientLines : $rawLines;
+
         $ingredients = $this->mapIngredientsWithSafety($sourceLines, $profile['allergens']);
         $ingredientHash = $this->hashIngredients(array_column($ingredients, 'name'));
+
+        $ocrAccuracy = $this->calculateOcrAccuracy($ingredients);
+        Log::info('Scan OCR accuracy computed', [
+            'user' => $data['user_email'] ?? 'unknown',
+            'ingredient_hash' => $ingredientHash,
+            'ocr_accuracy' => $ocrAccuracy,
+            'ingredients_count' => count($ingredients),
+        ]);
 
         $emptyNotice = empty($ingredients) ? 'No ingredient-like text was detected. Try a clearer label photo.' : null;
 
         return response()->json([
             'ingredients' => $ingredients,
             'raw_text' => $rawLines,
+            'ocr_accuracy' => $ocrAccuracy,
             'notice' => $emptyNotice,
             'ingredient_hash' => $ingredientHash,
             'profile' => $profile,
@@ -109,12 +60,8 @@ class ScanController extends Controller
 
         $profile = $this->resolveProfile($data['user_email']);
 
-        // Ensure each comma-separated value is treated as a distinct ingredient
         $cleanIngredientNames = collect($data['ingredients'])
-            ->flatMap(function ($i) {
-                $parts = preg_split('/,/', (string) $i);
-                return is_array($parts) ? $parts : [(string) $i];
-            })
+            ->flatMap(fn($i) => preg_split('/,/', (string) $i))
             ->map(fn($i) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', (string) $i)))
             ->filter()
             ->unique()
@@ -131,7 +78,6 @@ class ScanController extends Controller
         $productName = $productName !== '' ? $productName : 'Scanned Food';
         $ingredientHash = $data['ingredient_hash'] ?? $this->hashIngredients($cleanIngredientNames);
         $userEmail = strtolower($data['user_email']);
-
         $ingredients = $this->mapIngredientsWithSafety($cleanIngredientNames, $profile['allergens']);
 
         $cacheKey = 'scan_ai:' . md5($userEmail . '|' . strtolower($productName) . '|' . $ingredientHash);
@@ -158,10 +104,115 @@ class ScanController extends Controller
         return response()->json($payload);
     }
 
+    private function validateExtractRequest(Request $request): array
+    {
+        return $request->validate([
+            'image' => ['required', 'file', 'image', 'max:6144'],
+            'user_email' => ['required', 'email'],
+        ]);
+    }
+
+    private function storeUploadedImage(Request $request): string
+    {
+        $file = $request->file('image');
+        $storedName = Str::uuid()->toString() . '.' . $file->getClientOriginalExtension();
+        $path = $file->storeAs('scan_uploads', $storedName, 'local');
+        $absolutePath = Storage::disk('local')->path($path);
+
+        if (!file_exists($absolutePath)) {
+            throw ValidationException::withMessages([
+                'image' => ['Uploaded image could not be read from storage.'],
+            ]);
+        }
+
+        // Re-encode to JPEG
+        try {
+            $raw = file_get_contents($absolutePath);
+            if ($raw !== false) {
+                $img = @imagecreatefromstring($raw);
+                if ($img !== false) {
+                    imagejpeg($img, $absolutePath, 95);
+                    imagedestroy($img);
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Image re-encode skipped', ['error' => $e->getMessage()]);
+        }
+
+        return $absolutePath;
+    }
+
+    /**
+     * Run OCR using Google Vision and return text plus raw line annotations.
+     *
+     * @return array{text: string, lines: array}
+     */
+    private function performOcr(string $absolutePath): array
+    {
+        $apiKey = env('GOOGLE_VISION_API_KEY');
+        if (!$apiKey) {
+            throw ValidationException::withMessages([
+                'image' => ['Google Vision API key not set in .env.'],
+            ]);
+        }
+
+        try {
+            $imageContent = base64_encode(file_get_contents($absolutePath));
+            $response = Http::post("https://vision.googleapis.com/v1/images:annotate?key={$apiKey}", [
+                'requests' => [
+                    [
+                        'image' => ['content' => $imageContent],
+                        'features' => [['type' => 'TEXT_DETECTION']],
+                    ],
+                ],
+            ]);
+
+            if ($response->failed()) {
+                Log::warning('Google Vision API failed', ['status' => $response->status(), 'body' => $response->body()]);
+                throw ValidationException::withMessages([
+                    'image' => ['Failed to process image. Try again.'],
+                ]);
+            }
+
+            return [
+                'text' => (string) $response->json('responses.0.fullTextAnnotation.text', ''),
+                'lines' => $response->json('responses.0.textAnnotations', []),
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('Google Vision API error', ['error' => $e->getMessage()]);
+            throw ValidationException::withMessages([
+                'image' => ['OCR failed. Please try again with a clearer image.'],
+            ]);
+        }
+    }
+
+    private function parseIngredientsFromText(array $ocrData): array
+    {
+        $text = $ocrData['text'] ?? '';
+        $rawLines = collect(preg_split('/\r\n|\r|\n/', $text))
+            ->flatMap(fn($line) => preg_split('/,/', (string) $line))
+            ->map(fn($line) => trim(preg_replace('/[^A-Za-z0-9\s\-]/', '', (string) $line)))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $ingredientLines = collect($rawLines)->filter(function ($line) {
+            $len = strlen($line);
+            if ($len < 2 || $len > 50) return false;
+            if (preg_match('/https?:\/\//i', $line)) return false;
+            if (!preg_match('/[a-z]/i', $line)) return false;
+            $wordCount = str_word_count($line);
+            if ($wordCount === 0 || $wordCount > 6) return false;
+            return true;
+        })->values()->all();
+
+        return [$rawLines, $ingredientLines];
+    }
+
     private function resolveProfile(string $email): array
     {
         $user = User::where('email', strtolower($email))->first();
-
         if (!$user) {
             throw ValidationException::withMessages([
                 'user_email' => ['User not found. Please sign in again.'],
@@ -170,7 +221,6 @@ class ScanController extends Controller
 
         $allergens = $user->allergens ?? [];
         $allergens = array_values(array_filter(array_map(fn($a) => trim((string) $a), $allergens)));
-
         $country = $user->country ?? null;
         $diet = $user->diet_preference ?? 'No Preference';
         $goal = $user->health_goal ?? 'Eat Healthier';
@@ -208,8 +258,23 @@ class ScanController extends Controller
             ->filter()
             ->values()
             ->all();
-
         return hash('sha256', json_encode($normalized));
+    }
+
+    private function calculateOcrAccuracy(array $ingredients): float
+    {
+        if (empty($ingredients)) return 0.0;
+
+        $totalConfidence = 0;
+        $count = 0;
+
+        foreach ($ingredients as $ing) {
+            $conf = $ing['confidence'] ?? 1.0;
+            $totalConfidence += $conf;
+            $count++;
+        }
+
+        return round(($totalConfidence / max($count, 1)) * 100, 1);
     }
 
     private function buildAiAnalysis(array $ingredients, array $profile, string $productName): array
@@ -286,6 +351,19 @@ PROMPT;
             if (!is_array($decoded)) {
                 return $this->fallbackAi($raw);
             }
+
+            Log::info('AI health check completed', [
+                'product' => $productName,
+                'ingredient_hash' => $this->hashIngredients($ingredients),
+                'ingredients_count' => count($ingredients),
+                'allergen_count' => count($profile['allergens'] ?? []),
+                'diet' => $profile['diet'] ?? null,
+                'health_goal' => $profile['health_goal'] ?? null,
+                'verdict' => $decoded['verdict'] ?? 'Moderate',
+                'allergy_warning' => $decoded['allergy_warning'] ?? null,
+                'diet_conflict' => $decoded['diet_conflict'] ?? null,
+                'health_goal_alignment' => $decoded['health_goal_alignment'] ?? null,
+            ]);
 
             return [
                 'verdict' => $decoded['verdict'] ?? 'Moderate',
